@@ -8,6 +8,7 @@ struct ProjectRow: View {
     let isAnyDragging: Bool
     let onSelect: () -> Void
     let onRemove: () -> Void
+    let onAddRepositoryToFeatureSession: (() -> Void)?
     let onRename: (String) -> Void
     let onSetLogo: (String?) -> Void
     let onSetIconColor: (String?) -> Void
@@ -78,6 +79,10 @@ struct ProjectRow: View {
                             showWorktreePopover = true
                         }
                     }
+                }
+                if let onAddRepositoryToFeatureSession {
+                    Divider()
+                    Button("Add Repository…", action: onAddRepositoryToFeatureSession)
                 }
                 Divider()
                 Button("Remove Project", role: .destructive, action: onRemove)

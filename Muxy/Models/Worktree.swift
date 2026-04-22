@@ -4,6 +4,7 @@ enum WorktreeSource: String, Codable, Hashable {
     case muxy
     case external
     case featureSession
+    case featureSessionRoot
 }
 
 struct Worktree: Identifiable, Codable, Hashable {
@@ -41,7 +42,10 @@ struct Worktree: Identifiable, Codable, Hashable {
     }
 
     var canBeRemoved: Bool {
-        !isPrimary && !isExternallyManaged && source != .featureSession
+        !isPrimary
+            && !isExternallyManaged
+            && source != .featureSession
+            && source != .featureSessionRoot
     }
 
     private enum CodingKeys: String, CodingKey {

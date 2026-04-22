@@ -10,7 +10,13 @@ enum FeatureSessionRepositorySelectionMerger {
             if let existingRepository = repositoriesByID[incomingRepository.id],
                let existingIndex = mergedRepositories.firstIndex(where: { $0.id == existingRepository.id })
             {
-                mergedRepositories[existingIndex] = incomingRepository
+                mergedRepositories[existingIndex] = FeatureSessionRepositorySelection(
+                    path: incomingRepository.path,
+                    currentBranch: incomingRepository.currentBranch,
+                    selectedBaseBranch: existingRepository.selectedBaseBranch.isEmpty
+                        ? incomingRepository.selectedBaseBranch
+                        : existingRepository.selectedBaseBranch
+                )
                 continue
             }
 

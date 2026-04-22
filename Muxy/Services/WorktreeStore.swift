@@ -57,11 +57,17 @@ final class WorktreeStore {
         save(projectID: project.id)
     }
 
-    func list(for projectID: UUID) -> [Worktree] { worktrees[projectID] ?? [] }
+    func list(for projectID: UUID) -> [Worktree] {
+        worktrees[projectID] ?? []
+    }
 
-    func projectID(forWorktreePath path: String) -> UUID? { projectIDByPath[path] }
+    func projectID(forWorktreePath path: String) -> UUID? {
+        projectIDByPath[path]
+    }
 
-    func primary(for projectID: UUID) -> Worktree? { list(for: projectID).first(where: { $0.isPrimary }) }
+    func primary(for projectID: UUID) -> Worktree? {
+        list(for: projectID).first(where: { $0.isPrimary })
+    }
 
     func worktree(projectID: UUID, worktreeID: UUID) -> Worktree? {
         list(for: projectID).first(where: { $0.id == worktreeID })

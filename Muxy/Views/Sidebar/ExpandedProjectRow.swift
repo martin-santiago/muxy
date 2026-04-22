@@ -8,6 +8,7 @@ struct ExpandedProjectRow: View {
     let isAnyDragging: Bool
     let onSelect: () -> Void
     let onRemove: () -> Void
+    let onAddRepositoryToFeatureSession: (() -> Void)?
     let onRename: (String) -> Void
     let onSetLogo: (String?) -> Void
     let onSetIconColor: (String?) -> Void
@@ -86,6 +87,10 @@ struct ExpandedProjectRow: View {
                 Divider()
                 Button("Refresh Worktrees") { Task { await refreshWorktrees() } }
                 Button("New Worktree…") { showCreateWorktreeSheet = true }
+            }
+            if let onAddRepositoryToFeatureSession {
+                Divider()
+                Button("Add Repository…", action: onAddRepositoryToFeatureSession)
             }
             Divider()
             Button("Remove Project", role: .destructive, action: onRemove)
@@ -241,7 +246,7 @@ struct ExpandedProjectRow: View {
                     onSelect: {
                         appState.selectWorktree(projectID: project.id, worktree: worktree)
                     },
-                    onRename: worktree.source == .featureSession ? nil : { newName in
+                    onRename: isFeatureSessionWorktree(worktree) ? nil : { newName in
                         worktreeStore.rename(worktreeID: worktree.id, in: project.id, to: newName)
                     },
                     onRemove: worktree.canBeRemoved ? {
@@ -421,6 +426,10 @@ struct ExpandedProjectRow: View {
             isRefreshing: $isRefreshingWorktrees
         )
     }
+
+    private func isFeatureSessionWorktree(_ worktree: Worktree) -> Bool {
+        worktree.source == .featureSession || worktree.source == .featureSessionRoot
+    }
 }
 
 private struct ExpandedWorktreeRow: View {
@@ -449,9 +458,7 @@ private struct ExpandedWorktreeRow: View {
 
     var body: some View {
         HStack(spacing: 6) {
-            Circle()
-                .fill(selected ? MuxyTheme.accent : MuxyTheme.fgDim.opacity(0.35))
-                .frame(width: 5, height: 5)
+            rowIndicator
 
             if isRenaming {
                 TextField("", text: $renameText)
@@ -505,7 +512,9 @@ private struct ExpandedWorktreeRow: View {
             onSelect()
         }
         .contextMenu {
-            if worktree.source == .featureSession {
+            if worktree.source == .featureSessionRoot {
+                Text("Session root").font(.system(size: 11))
+            } else if worktree.source == .featureSession {
                 Text("Session repository").font(.system(size: 11))
             } else if worktree.isPrimary {
                 Text("Primary worktree").font(.system(size: 11))
@@ -527,6 +536,21 @@ private struct ExpandedWorktreeRow: View {
         .accessibilityLabel(worktreeAccessibilityLabel)
         .accessibilityAddTraits(selected ? .isSelected : [])
         .accessibilityAddTraits(.isButton)
+    }
+
+    @ViewBuilder
+    private var rowIndicator: some View {
+        if worktree.source == .featureSessionRoot {
+            Image(systemName: "folder.fill")
+                .font(.system(size: 9, weight: .semibold))
+                .foregroundStyle(selected ? MuxyTheme.accent : MuxyTheme.fgDim)
+                .frame(width: 10, alignment: .center)
+        } else {
+            Circle()
+                .fill(selected ? MuxyTheme.accent : MuxyTheme.fgDim.opacity(0.35))
+                .frame(width: 5, height: 5)
+                .frame(width: 10, alignment: .center)
+        }
     }
 
     private var worktreeAccessibilityLabel: String {

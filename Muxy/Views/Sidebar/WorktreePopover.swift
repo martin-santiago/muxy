@@ -42,7 +42,7 @@ struct WorktreePopover: View {
                         appState.selectWorktree(projectID: project.id, worktree: worktree)
                         onDismiss()
                     },
-                    onRename: worktree.source == .featureSession ? nil : { newName in
+                    onRename: isFeatureSessionWorktree(worktree) ? nil : { newName in
                         worktreeStore.rename(worktreeID: worktree.id, in: project.id, to: newName)
                     },
                     onRemove: worktree.canBeRemoved ? {
@@ -130,6 +130,10 @@ struct WorktreePopover: View {
             )
         }
     }
+
+    private func isFeatureSessionWorktree(_ worktree: Worktree) -> Bool {
+        worktree.source == .featureSession || worktree.source == .featureSessionRoot
+    }
 }
 
 private struct WorktreePopoverRow: View {
@@ -211,7 +215,9 @@ private struct WorktreePopoverRow: View {
             onSelect()
         }
         .contextMenu {
-            if worktree.source == .featureSession {
+            if worktree.source == .featureSessionRoot {
+                Text("Session root").font(.system(size: 11))
+            } else if worktree.source == .featureSession {
                 Text("Session repository").font(.system(size: 11))
             } else if worktree.isPrimary {
                 Text("Primary worktree").font(.system(size: 11))
@@ -231,13 +237,21 @@ private struct WorktreePopoverRow: View {
         }
     }
 
+    @ViewBuilder
     private var indicator: some View {
-        ZStack {
-            Circle()
-                .fill(selected ? MuxyTheme.accent : MuxyTheme.fgDim.opacity(0.35))
-                .frame(width: 7, height: 7)
+        if worktree.source == .featureSessionRoot {
+            Image(systemName: "folder.fill")
+                .font(.system(size: 10, weight: .semibold))
+                .foregroundStyle(selected ? MuxyTheme.accent : MuxyTheme.fgDim)
+                .frame(width: 10)
+        } else {
+            ZStack {
+                Circle()
+                    .fill(selected ? MuxyTheme.accent : MuxyTheme.fgDim.opacity(0.35))
+                    .frame(width: 7, height: 7)
+            }
+            .frame(width: 10)
         }
-        .frame(width: 10)
     }
 
     private var rowBackground: AnyShapeStyle {

@@ -31,12 +31,16 @@ enum FeatureSessionService {
     static func createSession(
         name: String,
         repositories: [FeatureSessionRepositorySelection],
-        sortOrder: Int
+        sortOrder: Int,
+        copyHiddenAndIgnoredFiles: Bool = false,
+        onProgress: @escaping FeatureSessionCreationProgressHandler = { _ in }
     ) async throws -> Project {
         try await createSession(
             name: name,
             repositories: repositories,
             sortOrder: sortOrder,
+            copyHiddenAndIgnoredFiles: copyHiddenAndIgnoredFiles,
+            onProgress: onProgress,
             dependencies: .live
         )
     }
@@ -45,6 +49,8 @@ enum FeatureSessionService {
         name: String,
         repositories: [FeatureSessionRepositorySelection],
         sortOrder: Int,
+        copyHiddenAndIgnoredFiles: Bool = false,
+        onProgress: @escaping FeatureSessionCreationProgressHandler = { _ in },
         dependencies: FeatureSessionServiceDependencies
     ) async throws -> Project {
         let sessionName = name.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -61,53 +67,42 @@ enum FeatureSessionService {
             repositories,
             sessionName: sessionName,
             sessionRoot: sessionRoot,
-            dependencies: dependencies
+            dependencies: dependencies,
+            onProgress: onProgress
         )
 
+        await onProgress(.preparingSessionDirectory)
         try dependencies.fileClient.createDirectory(
-            at: sessionRoot,
+            sessionRoot,
             true,
             [.posixPermissions: 0o700]
         )
 
-        var createdRepositories: [SessionRepository] = []
-
         do {
-            for repository in validatedRepositories {
-                do {
-                    try await dependencies.gitRepositoryClient.pull(repository.path)
-                } catch {
-                    throw FeatureSessionError.repositoryOperationFailed(
-                        repository.name,
-                        error.localizedDescription
-                    )
-                }
+            let createdRepositories = try await createRepositories(
+                validatedRepositories,
+                sessionName: sessionName,
+                copyHiddenAndIgnoredFiles: copyHiddenAndIgnoredFiles,
+                onProgress: onProgress,
+                dependencies: dependencies
+            )
 
-                do {
-                    try await dependencies.gitWorktreeClient.addWorktree(
-                        repository.path,
-                        repository.sessionPath,
-                        sessionName,
-                        true
-                    )
-                } catch {
-                    throw FeatureSessionError.repositoryOperationFailed(
-                        repository.name,
-                        error.localizedDescription
-                    )
-                }
-
-                createdRepositories.append(SessionRepository(
-                    name: repository.name,
-                    sourcePath: repository.path,
-                    sessionPath: repository.sessionPath,
-                    originalBranch: repository.currentBranch,
-                    sessionBranch: sessionName
-                ))
-            }
+            let featureSession = FeatureSession(
+                rootPath: sessionRoot.path,
+                repositories: createdRepositories,
+                primaryRepositoryID: createdRepositories.first?.id
+            )
+            return Project(
+                name: sessionName,
+                path: sessionRoot.path,
+                sortOrder: sortOrder,
+                mode: .featureSession,
+                featureSession: featureSession
+            )
         } catch {
+            await onProgress(.rollingBack)
             let cleanupReport = await cleanupRepositories(
-                createdRepositories,
+                [],
                 sessionName: sessionName,
                 sessionRootPath: sessionRoot.path,
                 dependencies: dependencies
@@ -118,19 +113,79 @@ enum FeatureSessionService {
             }
             throw error
         }
+    }
 
-        let featureSession = FeatureSession(
-            rootPath: sessionRoot.path,
-            repositories: createdRepositories,
-            primaryRepositoryID: createdRepositories.first?.id
+    static func addRepositories(
+        to project: Project,
+        repositories: [FeatureSessionRepositorySelection],
+        copyHiddenAndIgnoredFiles: Bool = false,
+        onProgress: @escaping FeatureSessionCreationProgressHandler = { _ in }
+    ) async throws -> Project {
+        try await addRepositories(
+            to: project,
+            repositories: repositories,
+            copyHiddenAndIgnoredFiles: copyHiddenAndIgnoredFiles,
+            onProgress: onProgress,
+            dependencies: .live
         )
-        return Project(
-            name: sessionName,
-            path: sessionRoot.path,
-            sortOrder: sortOrder,
-            mode: .featureSession,
-            featureSession: featureSession
+    }
+
+    static func addRepositories(
+        to project: Project,
+        repositories: [FeatureSessionRepositorySelection],
+        copyHiddenAndIgnoredFiles: Bool = false,
+        onProgress: @escaping FeatureSessionCreationProgressHandler = { _ in },
+        dependencies: FeatureSessionServiceDependencies
+    ) async throws -> Project {
+        guard let featureSession = project.featureSession else {
+            throw FeatureSessionError.notFeatureSessionProject
+        }
+
+        try validateRepositoriesSelected(repositories)
+        try validateRepositoryNames(repositories)
+
+        let validatedRepositories = try await validateRepositoriesForAppend(
+            repositories,
+            sessionName: project.name,
+            sessionRoot: URL(fileURLWithPath: featureSession.rootPath, isDirectory: true),
+            existingRepositories: featureSession.repositories,
+            dependencies: dependencies,
+            onProgress: onProgress
         )
+
+        var createdRepositories: [SessionRepository] = []
+
+        do {
+            createdRepositories = try await createRepositories(
+                validatedRepositories,
+                sessionName: project.name,
+                copyHiddenAndIgnoredFiles: copyHiddenAndIgnoredFiles,
+                onProgress: onProgress,
+                dependencies: dependencies
+            )
+        } catch {
+            await onProgress(.rollingBack)
+            let cleanupReport = await cleanupRepositories(
+                createdRepositories,
+                sessionName: project.name,
+                sessionRootPath: featureSession.rootPath,
+                dependencies: dependencies,
+                removeSessionRoot: false
+            )
+            if cleanupReport.hasIssues {
+                logger.error("Feature session cleanup incomplete for \(project.name): \(cleanupReport.alertMessage)")
+                throw FeatureSessionError.cleanupFailed(error.localizedDescription, cleanupReport.alertMessage)
+            }
+            throw error
+        }
+
+        var updatedProject = project
+        updatedProject.featureSession = FeatureSession(
+            rootPath: featureSession.rootPath,
+            repositories: featureSession.repositories + createdRepositories,
+            primaryRepositoryID: featureSession.primaryRepositoryID
+        )
+        return updatedProject
     }
 
     static func deleteSession(project: Project) async -> FeatureSessionCleanupReport {
@@ -156,4 +211,87 @@ enum FeatureSessionService {
         return cleanupReport
     }
 
+    private static func createRepositories(
+        _ validatedRepositories: [ValidatedFeatureSessionRepository],
+        sessionName: String,
+        copyHiddenAndIgnoredFiles: Bool,
+        onProgress: @escaping FeatureSessionCreationProgressHandler,
+        dependencies: FeatureSessionServiceDependencies
+    ) async throws -> [SessionRepository] {
+        var createdRepositories: [SessionRepository] = []
+
+        do {
+            for validatedRepository in validatedRepositories {
+                await onProgress(.pullingRepository(name: validatedRepository.name))
+                do {
+                    try await dependencies.gitRepositoryClient.pull(validatedRepository.path)
+                } catch {
+                    throw FeatureSessionError.repositoryOperationFailed(
+                        validatedRepository.name,
+                        error.localizedDescription
+                    )
+                }
+
+                await onProgress(.creatingWorktree(name: validatedRepository.name))
+                do {
+                    try await dependencies.gitWorktreeClient.addWorktree(
+                        validatedRepository.path,
+                        validatedRepository.sessionPath,
+                        sessionName,
+                        true,
+                        validatedRepository.baseBranch
+                    )
+                } catch {
+                    throw FeatureSessionError.repositoryOperationFailed(
+                        validatedRepository.name,
+                        error.localizedDescription
+                    )
+                }
+
+                let createdRepository = SessionRepository(
+                    name: validatedRepository.name,
+                    sourcePath: validatedRepository.path,
+                    sessionPath: validatedRepository.sessionPath,
+                    originalBranch: validatedRepository.currentBranch,
+                    baseBranch: validatedRepository.baseBranch,
+                    sessionBranch: sessionName
+                )
+                createdRepositories.append(createdRepository)
+
+                if copyHiddenAndIgnoredFiles {
+                    await onProgress(.copyingHiddenFiles(name: validatedRepository.name))
+                    do {
+                        try await dependencies.fileClient.copyUntrackedAndIgnored(
+                            validatedRepository.path,
+                            validatedRepository.sessionPath
+                        )
+                    } catch {
+                        throw FeatureSessionError.repositoryOperationFailed(
+                            validatedRepository.name,
+                            error.localizedDescription
+                        )
+                    }
+                }
+
+                await onProgress(.finishedRepository(name: validatedRepository.name))
+            }
+
+            return createdRepositories
+        } catch {
+            let cleanupReport = await cleanupRepositories(
+                createdRepositories,
+                sessionName: sessionName,
+                sessionRootPath: validatedRepositories.first.map {
+                    URL(fileURLWithPath: $0.sessionPath).deletingLastPathComponent().path(percentEncoded: false)
+                } ?? "",
+                dependencies: dependencies,
+                removeSessionRoot: false
+            )
+            if cleanupReport.hasIssues {
+                logger.error("Feature session cleanup incomplete for \(sessionName): \(cleanupReport.alertMessage)")
+                throw FeatureSessionError.cleanupFailed(error.localizedDescription, cleanupReport.alertMessage)
+            }
+            throw error
+        }
+    }
 }

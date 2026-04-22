@@ -9,29 +9,49 @@ enum FeatureSessionWorktreeFactory {
             return nil
         }
 
-        let primaryRepositoryID = featureSession.primaryRepositoryID
-            ?? featureSession.repositories.first?.id
+        let rootWorktree = Worktree(
+            id: rootWorktreeID(for: featureSession),
+            name: project.name,
+            path: featureSession.rootPath,
+            branch: nil,
+            source: .featureSessionRoot,
+            isPrimary: true,
+            createdAt: project.createdAt
+        )
 
-        return featureSession.repositories.enumerated().map { index, repository in
+        let repositoryWorktrees = featureSession.repositories.enumerated().map { index, repository in
             Worktree(
-                id: worktreeID(for: repository),
+                id: repositoryWorktreeID(for: repository),
                 name: repository.name,
                 path: repository.sessionPath,
                 branch: repository.sessionBranch,
                 source: .featureSession,
-                isPrimary: repository.id == primaryRepositoryID ||
-                    (primaryRepositoryID == nil && index == 0),
-                createdAt: project.createdAt.addingTimeInterval(Double(index))
+                isPrimary: false,
+                createdAt: project.createdAt.addingTimeInterval(Double(index + 1))
             )
         }
+
+        return [rootWorktree] + repositoryWorktrees
     }
 
-    private static func worktreeID(for repository: SessionRepository) -> UUID {
+    private static func rootWorktreeID(for featureSession: FeatureSession) -> UUID {
+        let canonicalPath = URL(fileURLWithPath: featureSession.rootPath)
+            .standardizedFileURL
+            .resolvingSymlinksInPath()
+            .path(percentEncoded: false)
+        return deterministicUUID(from: canonicalPath + "#ROOT")
+    }
+
+    private static func repositoryWorktreeID(for repository: SessionRepository) -> UUID {
         let canonicalPath = URL(fileURLWithPath: repository.sessionPath)
             .standardizedFileURL
             .resolvingSymlinksInPath()
             .path(percentEncoded: false)
-        let digest = SHA256.hash(data: Data(canonicalPath.utf8))
+        return deterministicUUID(from: canonicalPath)
+    }
+
+    private static func deterministicUUID(from input: String) -> UUID {
+        let digest = SHA256.hash(data: Data(input.utf8))
         let bytes = Array(digest.prefix(16))
         let uuidBytes: uuid_t = (
             bytes[0], bytes[1], bytes[2], bytes[3],

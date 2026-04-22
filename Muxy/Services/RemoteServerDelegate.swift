@@ -438,7 +438,8 @@ final class RemoteServerDelegate: MuxyRemoteServerDelegate {
             repoPath: project.path,
             path: worktreeDirectory,
             branch: trimmedBranch,
-            createBranch: createBranch
+            createBranch: createBranch,
+            startPoint: nil
         )
 
         let worktree = Worktree(

@@ -45,6 +45,13 @@ final class ProjectStore {
         save()
     }
 
+    func updateFeatureSession(id: UUID, featureSession: FeatureSession) {
+        guard let index = projects.firstIndex(where: { $0.id == id }) else { return }
+        projects[index].mode = .featureSession
+        projects[index].featureSession = featureSession
+        save()
+    }
+
     func reorder(fromOffsets source: IndexSet, toOffset destination: Int) {
         projects.move(fromOffsets: source, toOffset: destination)
         for index in projects.indices {

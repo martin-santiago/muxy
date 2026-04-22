@@ -1,4 +1,5 @@
 import Foundation
+import Foundation
 import MuxyShared
 import Testing
 
@@ -55,6 +56,7 @@ struct WorktreeStoreTests {
                 sourcePath: "/tmp/source-api",
                 sessionPath: "/tmp/sessions/feature/api",
                 originalBranch: "main",
+                baseBranch: "main",
                 sessionBranch: "feature"
             ),
             SessionRepository(
@@ -62,6 +64,7 @@ struct WorktreeStoreTests {
                 sourcePath: "/tmp/source-web",
                 sessionPath: "/tmp/sessions/feature/web",
                 originalBranch: "main",
+                baseBranch: "main",
                 sessionBranch: "feature"
             ),
         ]
@@ -78,12 +81,17 @@ struct WorktreeStoreTests {
 
         let worktrees = store.list(for: project.id)
 
-        #expect(worktrees.count == 2)
+        #expect(worktrees.count == 3)
         #expect(worktrees[0].isPrimary)
-        #expect(worktrees[0].path == repositories[0].sessionPath)
-        #expect(worktrees[0].source == .featureSession)
-        #expect(worktrees[1].path == repositories[1].sessionPath)
+        #expect(worktrees[0].source == .featureSessionRoot)
+        #expect(worktrees[0].path == project.featureSession?.rootPath)
+        #expect(worktrees[0].canBeRemoved == false)
+        #expect(worktrees[1].path == repositories[0].sessionPath)
+        #expect(worktrees[1].source == .featureSession)
+        #expect(worktrees[1].isPrimary == false)
         #expect(worktrees[1].canBeRemoved == false)
+        #expect(worktrees[2].path == repositories[1].sessionPath)
+        #expect(worktrees[2].canBeRemoved == false)
         #expect(worktrees[0].id == FeatureSessionWorktreeFactory.worktrees(for: project)?[0].id)
     }
 
@@ -94,6 +102,7 @@ struct WorktreeStoreTests {
             sourcePath: "/tmp/source-api",
             sessionPath: "/tmp/sessions/feature/api",
             originalBranch: "main",
+            baseBranch: "main",
             sessionBranch: "feature"
         )
         let project = Project(
@@ -109,13 +118,14 @@ struct WorktreeStoreTests {
         #expect(firstID == secondID)
     }
 
-    @Test("feature sessions preserve the creation-time primary repository")
-    func featureSessionsPreservePrimaryRepositorySelection() throws {
+    @Test("feature session root is the only primary regardless of primaryRepositoryID")
+    func featureSessionRootIsOnlyPrimary() throws {
         let apiRepository = SessionRepository(
             name: "api",
             sourcePath: "/tmp/source-api",
             sessionPath: "/tmp/sessions/feature/api",
             originalBranch: "main",
+            baseBranch: "main",
             sessionBranch: "feature"
         )
         let webRepository = SessionRepository(
@@ -123,6 +133,7 @@ struct WorktreeStoreTests {
             sourcePath: "/tmp/source-web",
             sessionPath: "/tmp/sessions/feature/web",
             originalBranch: "main",
+            baseBranch: "main",
             sessionBranch: "feature"
         )
         let project = Project(
@@ -138,10 +149,11 @@ struct WorktreeStoreTests {
 
         let worktrees = try #require(FeatureSessionWorktreeFactory.worktrees(for: project))
 
-        #expect(worktrees.count == 2)
-        #expect(worktrees[0].isPrimary == false)
-        #expect(worktrees[1].isPrimary)
-        #expect(worktrees[1].path == webRepository.sessionPath)
+        #expect(worktrees.count == 3)
+        #expect(worktrees[0].isPrimary)
+        #expect(worktrees[0].source == .featureSessionRoot)
+        #expect(worktrees[1].isPrimary == false)
+        #expect(worktrees[2].isPrimary == false)
     }
 
     @Test("feature sessions decode legacy payloads without primary repository metadata")
@@ -167,6 +179,7 @@ struct WorktreeStoreTests {
 
         #expect(featureSession.primaryRepositoryID == nil)
         #expect(featureSession.repositories.first?.id == sessionRepositoryID)
+        #expect(featureSession.repositories.first?.baseBranch == "main")
     }
 
     @Test("refreshFromGit imports missing external worktrees and preserves existing IDs by path")

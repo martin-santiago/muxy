@@ -2,27 +2,58 @@ import AppKit
 import SwiftUI
 
 struct CreateFeatureSessionSheet: View {
-    @Environment(\.dismiss) private var dismiss
+    enum Mode: Hashable, Identifiable {
+        case create
+        case append(Project)
 
-    let onCreateSession: @MainActor (String, [FeatureSessionRepositorySelection]) async throws -> Void
+        var id: String {
+            switch self {
+            case .create:
+                "create"
+            case let .append(project):
+                "append-\(project.id.uuidString)"
+            }
+        }
+    }
 
-    @State private var sessionName = ""
-    @State private var repositories: [FeatureSessionRepositorySelection] = []
-    @State private var errorMessage: String?
-    @State private var isInspectingRepositories = false
-    @State private var isCreatingSession = false
+    @Environment(\.dismiss) var dismiss
+
+    let mode: Mode
+    let onSubmit: @MainActor (
+        Mode,
+        String,
+        [FeatureSessionRepositorySelection],
+        Bool,
+        @escaping FeatureSessionCreationProgressHandler
+    ) async throws -> Void
+
+    @State var sessionName = ""
+    @State var repositories: [FeatureSessionRepositorySelection] = []
+    @State var copyHiddenAndIgnoredFiles = false
+    @State var availableBranchesByRepositoryID: [String: [String]] = [:]
+    @State var loadingRepositoryIDs: Set<String> = []
+    @State var errorMessage: String?
+    @State var isInspectingRepositories = false
+    @State var isCreatingSession = false
+    @State var progressStatus: String?
 
     var body: some View {
         VStack(alignment: .leading, spacing: 16) {
-            Text("Create Feature Session")
+            Text(sheetTitle)
                 .font(.system(size: 16, weight: .semibold))
 
-            VStack(alignment: .leading, spacing: 8) {
-                Text("Session Name")
-                    .font(.system(size: 12, weight: .medium))
-                    .foregroundStyle(MuxyTheme.fgMuted)
-                TextField("feature/session-name", text: $sessionName)
-                    .textFieldStyle(.roundedBorder)
+            if case let .append(project) = mode {
+                Text("Adding repositories to \(project.name)")
+                    .font(.system(size: 12))
+                    .foregroundStyle(MuxyTheme.fgDim)
+            } else {
+                VStack(alignment: .leading, spacing: 8) {
+                    Text("Session Name")
+                        .font(.system(size: 12, weight: .medium))
+                        .foregroundStyle(MuxyTheme.fgMuted)
+                    TextField("feature/session-name", text: $sessionName)
+                        .textFieldStyle(.roundedBorder)
+                }
             }
 
             VStack(alignment: .leading, spacing: 8) {
@@ -44,10 +75,34 @@ struct CreateFeatureSessionSheet: View {
                 }
             }
 
+            VStack(alignment: .leading, spacing: 6) {
+                Toggle(isOn: $copyHiddenAndIgnoredFiles) {
+                    Text("Copy hidden & ignored files")
+                        .font(.system(size: 12, weight: .medium))
+                }
+                .toggleStyle(.switch)
+                .disabled(isBusy)
+                Text(
+                    "Copies untracked and gitignored files such as .env, .vscode, and local configs into each new worktree. node_modules is never copied, even when this is enabled. Large ignored file sets can still take a while."
+                )
+                .font(.system(size: 11))
+                .foregroundStyle(MuxyTheme.fgDim)
+            }
+
             if let errorMessage {
                 Text(errorMessage)
                     .font(.system(size: 12))
                     .foregroundStyle(MuxyTheme.diffRemoveFg)
+            }
+
+            if isCreatingSession, let progressStatus {
+                HStack(spacing: 8) {
+                    ProgressView().controlSize(.small)
+                    Text(progressStatus)
+                        .font(.system(size: 12))
+                        .foregroundStyle(MuxyTheme.fgMuted)
+                        .animation(.easeInOut(duration: 0.15), value: progressStatus)
+                }
             }
 
             HStack {
@@ -56,42 +111,37 @@ struct CreateFeatureSessionSheet: View {
                     dismiss()
                 }
                 .disabled(isBusy)
-                Button(isCreatingSession ? "Creating…" : "Create Session") {
-                    handleCreateSession()
+                Button(isCreatingSession ? inProgressCTA : submitCTA) {
+                    handleSubmit()
                 }
                 .keyboardShortcut(.defaultAction)
-                .disabled(isCreateButtonDisabled)
+                .disabled(isSubmitButtonDisabled)
             }
         }
         .padding(20)
-        .frame(width: 520)
+        .frame(width: 600)
     }
 
     private var repositoryList: some View {
         VStack(spacing: 8) {
             ForEach(repositories) { repository in
-                HStack(spacing: 10) {
-                    VStack(alignment: .leading, spacing: 2) {
-                        Text(repository.name)
-                            .font(.system(size: 12, weight: .medium))
-                            .foregroundStyle(MuxyTheme.fg)
-                        Text(repository.currentBranch)
-                            .font(.system(size: 11, design: .monospaced))
-                            .foregroundStyle(MuxyTheme.fgDim)
-                    }
-                    Spacer()
-                    Button {
+                FeatureSessionRepositoryRow(
+                    repository: repository,
+                    availableBranches: availableBranches(for: repository),
+                    isLoadingBranches: loadingRepositoryIDs.contains(repository.id),
+                    isDisabled: isBusy,
+                    onSelectBaseBranch: { selectedBaseBranch in
+                        updateSelectedBaseBranch(repositoryID: repository.id, selectedBaseBranch: selectedBaseBranch)
+                    },
+                    onRefreshBranches: {
+                        Task {
+                            await loadAvailableBranches(for: repository, forceRefresh: true)
+                        }
+                    },
+                    onRemove: {
                         repositories.removeAll { $0.id == repository.id }
-                    } label: {
-                        Image(systemName: "xmark.circle.fill")
-                            .foregroundStyle(MuxyTheme.fgDim)
                     }
-                    .buttonStyle(.plain)
-                    .disabled(isBusy)
-                }
-                .padding(.horizontal, 10)
-                .padding(.vertical, 8)
-                .background(MuxyTheme.surface, in: RoundedRectangle(cornerRadius: 8))
+                )
             }
         }
     }
@@ -105,74 +155,5 @@ struct CreateFeatureSessionSheet: View {
                     .foregroundStyle(MuxyTheme.fgDim)
             }
             .frame(height: 88)
-    }
-
-    private var isBusy: Bool {
-        isInspectingRepositories || isCreatingSession
-    }
-
-    private var isCreateButtonDisabled: Bool {
-        isBusy || sessionName.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || repositories.isEmpty
-    }
-
-    private func handleSelectRepositories() {
-        let panel = NSOpenPanel()
-        panel.canChooseDirectories = true
-        panel.canChooseFiles = false
-        panel.allowsMultipleSelection = true
-        panel.message = "Select Git repositories"
-        guard panel.runModal() == .OK else { return }
-        let selectedPaths = panel.urls.map { $0.path(percentEncoded: false) }
-
-        Task {
-            await loadRepositories(selectedPaths)
-        }
-    }
-
-    @MainActor
-    private func loadRepositories(_ selectedPaths: [String]) async {
-        isInspectingRepositories = true
-        errorMessage = nil
-        do {
-            let selectedRepositories = try await FeatureSessionService.inspectRepositories(paths: selectedPaths)
-            repositories = mergeRepositories(selectedRepositories)
-        } catch {
-            errorMessage = error.localizedDescription
-        }
-        isInspectingRepositories = false
-    }
-
-    private func handleCreateSession() {
-        let currentSessionName = sessionName
-        let selectedRepositories = repositories
-
-        Task {
-            await submitSessionCreation(currentSessionName, selectedRepositories)
-        }
-    }
-
-    @MainActor
-    private func submitSessionCreation(
-        _ selectedSessionName: String,
-        _ selectedRepositories: [FeatureSessionRepositorySelection]
-    ) async {
-        isCreatingSession = true
-        errorMessage = nil
-        do {
-            try await onCreateSession(selectedSessionName, selectedRepositories)
-            dismiss()
-        } catch {
-            errorMessage = error.localizedDescription
-        }
-        isCreatingSession = false
-    }
-
-    private func mergeRepositories(
-        _ incomingRepositories: [FeatureSessionRepositorySelection]
-    ) -> [FeatureSessionRepositorySelection] {
-        FeatureSessionRepositorySelectionMerger.merge(
-            existingRepositories: repositories,
-            incomingRepositories: incomingRepositories
-        )
     }
 }

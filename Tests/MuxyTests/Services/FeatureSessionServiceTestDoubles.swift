@@ -5,11 +5,18 @@ import Foundation
 final class FeatureSessionFileClientStub: @unchecked Sendable {
     var existingPaths: Set<String>
     var removedPaths: [String] = []
+    var copyUntrackedAndIgnoredCalls: [(source: String, destination: String)] = []
     private let removeFailuresByPath: [String: String]
+    private let copyFailuresBySourcePath: [String: String]
 
-    init(existingPaths: Set<String> = [], removeFailuresByPath: [String: String] = [:]) {
+    init(
+        existingPaths: Set<String> = [],
+        removeFailuresByPath: [String: String] = [:],
+        copyFailuresBySourcePath: [String: String] = [:]
+    ) {
         self.existingPaths = existingPaths
         self.removeFailuresByPath = removeFailuresByPath
+        self.copyFailuresBySourcePath = copyFailuresBySourcePath
     }
 
     var client: FeatureSessionFileClient {
@@ -24,6 +31,12 @@ final class FeatureSessionFileClientStub: @unchecked Sendable {
                     throw FeatureSessionStubError(message: message)
                 }
                 self.existingPaths.remove(path)
+            },
+            copyUntrackedAndIgnored: { sourcePath, destinationPath in
+                self.copyUntrackedAndIgnoredCalls.append((sourcePath, destinationPath))
+                if let message = self.copyFailuresBySourcePath[sourcePath] {
+                    throw FeatureSessionStubError(message: message)
+                }
             }
         )
     }
@@ -64,7 +77,10 @@ final class FeatureSessionGitRepositoryClientStub: @unchecked Sendable {
     }
 
     private func listBranches(path: String) throws -> [String] {
-        branchesByPath[path] ?? []
+        if let branches = branchesByPath[path] {
+            return branches
+        }
+        return [try currentBranch(path: path)]
     }
 
     private func pull(path: String) throws {
@@ -75,15 +91,16 @@ final class FeatureSessionGitRepositoryClientStub: @unchecked Sendable {
 }
 
 final class FeatureSessionGitWorktreeClientStub: @unchecked Sendable {
-    private let gitRepositoryPaths: Set<String>
+    private let gitRepositoryPaths: Set<String>?
     private let addFailuresByPath: [String: String]
     private let removeFailuresByPath: [String: String]
     private let deleteFailuresByBranch: [String: String]
+    private var addWorktreeCallsStore: [(repoPath: String, path: String, branch: String, createBranch: Bool, startPoint: String?)] = []
     private var removedPathsStore: [String] = []
     private var deletedBranchesStore: [String] = []
 
     init(
-        gitRepositoryPaths: Set<String> = [],
+        gitRepositoryPaths: Set<String>? = nil,
         addFailuresByPath: [String: String] = [:],
         removeFailuresByPath: [String: String] = [:],
         deleteFailuresByBranch: [String: String] = [:]
@@ -99,8 +116,14 @@ final class FeatureSessionGitWorktreeClientStub: @unchecked Sendable {
             isGitRepository: { path in
                 self.isGitRepository(path: path)
             },
-            addWorktree: { _, path, _, _ in
-                try self.addWorktree(path: path)
+            addWorktree: { repoPath, path, branch, createBranch, startPoint in
+                try self.addWorktree(
+                    repoPath: repoPath,
+                    path: path,
+                    branch: branch,
+                    createBranch: createBranch,
+                    startPoint: startPoint
+                )
             },
             removeWorktree: { _, path, _ in
                 try self.removeWorktree(path: path)
@@ -115,15 +138,27 @@ final class FeatureSessionGitWorktreeClientStub: @unchecked Sendable {
         removedPathsStore
     }
 
+    func addWorktreeCalls() -> [(repoPath: String, path: String, branch: String, createBranch: Bool, startPoint: String?)] {
+        addWorktreeCallsStore
+    }
+
     func deletedBranches() -> [String] {
         deletedBranchesStore
     }
 
     private func isGitRepository(path: String) -> Bool {
-        gitRepositoryPaths.isEmpty || gitRepositoryPaths.contains(path)
+        guard let gitRepositoryPaths else { return true }
+        return gitRepositoryPaths.contains(path)
     }
 
-    private func addWorktree(path: String) throws {
+    private func addWorktree(
+        repoPath: String,
+        path: String,
+        branch: String,
+        createBranch: Bool,
+        startPoint: String?
+    ) throws {
+        addWorktreeCallsStore.append((repoPath, path, branch, createBranch, startPoint))
         if let message = addFailuresByPath[path] {
             throw FeatureSessionStubError(message: message)
         }

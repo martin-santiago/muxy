@@ -219,7 +219,8 @@ struct CreateWorktreeSheet: View {
                 repoPath: project.path,
                 path: worktreeDirectory,
                 branch: branch,
-                createBranch: createNewBranch
+                createBranch: createNewBranch,
+                startPoint: nil
             )
         } catch {
             await MainActor.run {

@@ -1,10 +1,96 @@
 import Foundation
+import Foundation
 import Testing
 
 @testable import Muxy
 
 @Suite("FeatureSessionService")
 struct FeatureSessionServiceTests {
+    @Test("createSession emits progress events in order for happy path")
+    func createSessionEmitsProgressEvents() async throws {
+        let dependencies = makeDependencies(
+            sessionRoot: URL(fileURLWithPath: "/tmp/sessions/feature-session", isDirectory: true)
+        )
+        let eventCollector = EventCollector()
+
+        _ = try await FeatureSessionService.createSession(
+            name: "feature-session",
+            repositories: [selection(path: "/tmp/source/api"), selection(path: "/tmp/source/web")],
+            sortOrder: 0,
+            onProgress: { featureSessionCreationEvent in
+                eventCollector.append(featureSessionCreationEvent)
+            },
+            dependencies: dependencies
+        )
+
+        let featureSessionCreationEvents = await MainActor.run { eventCollector.all }
+
+        #expect(featureSessionCreationEvents == [
+            .validatingRepository(name: "api"),
+            .validatingRepository(name: "web"),
+            .preparingSessionDirectory,
+            .pullingRepository(name: "api"),
+            .creatingWorktree(name: "api"),
+            .finishedRepository(name: "api"),
+            .pullingRepository(name: "web"),
+            .creatingWorktree(name: "web"),
+            .finishedRepository(name: "web"),
+        ])
+    }
+
+    @Test("createSession emits copyingHiddenFiles when toggle is on")
+    func createSessionEmitsCopyingHiddenFilesWhenEnabled() async throws {
+        let dependencies = makeDependencies(
+            sessionRoot: URL(fileURLWithPath: "/tmp/sessions/feature-session", isDirectory: true)
+        )
+        let eventCollector = EventCollector()
+
+        _ = try await FeatureSessionService.createSession(
+            name: "feature-session",
+            repositories: [selection(path: "/tmp/source/api")],
+            sortOrder: 0,
+            copyHiddenAndIgnoredFiles: true,
+            onProgress: { featureSessionCreationEvent in
+                eventCollector.append(featureSessionCreationEvent)
+            },
+            dependencies: dependencies
+        )
+
+        let featureSessionCreationEvents = await MainActor.run { eventCollector.all }
+
+        #expect(featureSessionCreationEvents.contains(.copyingHiddenFiles(name: "api")))
+    }
+
+    @Test("createSession emits rollingBack when a later step fails")
+    func createSessionEmitsRollingBackOnFailure() async {
+        let sessionRoot = URL(fileURLWithPath: "/tmp/sessions/feature-session", isDirectory: true)
+        let dependencies = makeDependencies(
+            gitWorktreeClient: FeatureSessionGitWorktreeClientStub(
+                addFailuresByPath: [sessionRoot.appendingPathComponent("web", isDirectory: true).path: "add failed"]
+            ),
+            sessionRoot: sessionRoot
+        )
+        let eventCollector = EventCollector()
+
+        do {
+            _ = try await FeatureSessionService.createSession(
+                name: "feature-session",
+                repositories: [selection(path: "/tmp/source/api"), selection(path: "/tmp/source/web")],
+                sortOrder: 0,
+                onProgress: { featureSessionCreationEvent in
+                    eventCollector.append(featureSessionCreationEvent)
+                },
+                dependencies: dependencies
+            )
+            Issue.record("expected repository operation failure")
+        } catch {
+        }
+
+        let featureSessionCreationEvents = await MainActor.run { eventCollector.all }
+
+        #expect(featureSessionCreationEvents.contains(.rollingBack))
+    }
+
     @Test("createSession requires at least one repository")
     func createSessionRequiresRepositories() async {
         let dependencies = makeDependencies()
@@ -178,6 +264,7 @@ struct FeatureSessionServiceTests {
                         sourcePath: "/tmp/source/api",
                         sessionPath: sessionPath,
                         originalBranch: "main",
+                        baseBranch: "main",
                         sessionBranch: "feature-session"
                     )
                 ]
@@ -267,7 +354,7 @@ struct FeatureSessionServiceTests {
                 Issue.record("unexpected error: \(error.localizedDescription)")
                 return
             }
-            #expect(path == "/tmp/not-git")
+            #expect(path == URL(fileURLWithPath: "/tmp/not-git").standardizedFileURL.path(percentEncoded: false))
         } catch {
             Issue.record("unexpected error: \(error.localizedDescription)")
         }
@@ -363,8 +450,9 @@ struct FeatureSessionServiceTests {
         let removedWorktreePaths = gitWorktreeClient.removedWorktreePaths()
         let deletedBranches = gitWorktreeClient.deletedBranches()
         let removedFilePaths = fileClient.removedPaths
+        let apiSessionPath = sessionRoot.appendingPathComponent("api", isDirectory: true).path
 
-        #expect(removedWorktreePaths.isEmpty)
+        #expect(removedWorktreePaths == [apiSessionPath])
         #expect(deletedBranches == ["feature-session"])
         #expect(removedFilePaths.contains(sessionRoot.path))
         #expect(fileClient.existingPaths.contains(sessionRoot.path) == false)
@@ -410,7 +498,7 @@ struct FeatureSessionServiceTests {
                 Issue.record("unexpected error: \(error.localizedDescription)")
                 return
             }
-            #expect(path == "/tmp/not-git")
+            #expect(path == URL(fileURLWithPath: "/tmp/not-git").standardizedFileURL.path(percentEncoded: false))
         } catch {
             Issue.record("unexpected error: \(error.localizedDescription)")
         }
@@ -496,10 +584,98 @@ struct FeatureSessionServiceTests {
         }
     }
 
+    @Test("createSession invokes copy once per repository when copyHiddenAndIgnoredFiles is true")
+    func createSessionCopiesHiddenAndIgnoredFilesPerRepository() async throws {
+        let sessionRoot = URL(fileURLWithPath: "/tmp/sessions/feature-session", isDirectory: true)
+        let fileClient = FeatureSessionFileClientStub()
+        let dependencies = makeDependencies(fileClient: fileClient, sessionRoot: sessionRoot)
+
+        _ = try await FeatureSessionService.createSession(
+            name: "feature-session",
+            repositories: [selection(path: "/tmp/source/api"), selection(path: "/tmp/source/web")],
+            sortOrder: 0,
+            copyHiddenAndIgnoredFiles: true,
+            dependencies: dependencies
+        )
+
+        let copyCalls = fileClient.copyUntrackedAndIgnoredCalls
+        #expect(copyCalls.count == 2)
+        #expect(copyCalls[0].source == "/tmp/source/api")
+        #expect(copyCalls[0].destination == sessionRoot.appendingPathComponent("api", isDirectory: true).path)
+        #expect(copyCalls[1].source == "/tmp/source/web")
+        #expect(copyCalls[1].destination == sessionRoot.appendingPathComponent("web", isDirectory: true).path)
+    }
+
+    @Test("createSession does not invoke copy when copyHiddenAndIgnoredFiles is false")
+    func createSessionSkipsCopyWhenDisabled() async throws {
+        let sessionRoot = URL(fileURLWithPath: "/tmp/sessions/feature-session", isDirectory: true)
+        let fileClient = FeatureSessionFileClientStub()
+        let dependencies = makeDependencies(fileClient: fileClient, sessionRoot: sessionRoot)
+
+        _ = try await FeatureSessionService.createSession(
+            name: "feature-session",
+            repositories: [selection(path: "/tmp/source/api"), selection(path: "/tmp/source/web")],
+            sortOrder: 0,
+            dependencies: dependencies
+        )
+
+        #expect(fileClient.copyUntrackedAndIgnoredCalls.isEmpty)
+    }
+
+    @Test("createSession rolls back when copy fails")
+    func createSessionRollsBackWhenCopyFails() async {
+        let sessionRoot = URL(fileURLWithPath: "/tmp/sessions/feature-session", isDirectory: true)
+        let fileClient = FeatureSessionFileClientStub(
+            copyFailuresBySourcePath: ["/tmp/source/web": "disk full"]
+        )
+        let gitWorktreeClient = FeatureSessionGitWorktreeClientStub()
+        let dependencies = makeDependencies(
+            fileClient: fileClient,
+            gitWorktreeClient: gitWorktreeClient,
+            sessionRoot: sessionRoot
+        )
+
+        do {
+            _ = try await FeatureSessionService.createSession(
+                name: "feature-session",
+                repositories: [selection(path: "/tmp/source/api"), selection(path: "/tmp/source/web")],
+                sortOrder: 0,
+                copyHiddenAndIgnoredFiles: true,
+                dependencies: dependencies
+            )
+            Issue.record("expected repository operation failure")
+        } catch let error as FeatureSessionError {
+            guard case let .repositoryOperationFailed(repositoryName, message) = error else {
+                Issue.record("unexpected error: \(error.localizedDescription)")
+                return
+            }
+            #expect(repositoryName == "web")
+            #expect(message.contains("disk full"))
+        } catch {
+            Issue.record("unexpected error: \(error.localizedDescription)")
+        }
+
+        let removedWorktreePaths = gitWorktreeClient.removedWorktreePaths()
+        let deletedBranches = gitWorktreeClient.deletedBranches()
+        let removedFilePaths = fileClient.removedPaths
+        let apiSessionPath = sessionRoot.appendingPathComponent("api", isDirectory: true).path
+        let webSessionPath = sessionRoot.appendingPathComponent("web", isDirectory: true).path
+
+        #expect(removedWorktreePaths.contains(apiSessionPath))
+        #expect(removedWorktreePaths.contains(webSessionPath))
+        #expect(deletedBranches == ["feature-session", "feature-session"])
+        #expect(removedFilePaths.contains(sessionRoot.path))
+        #expect(fileClient.existingPaths.contains(sessionRoot.path) == false)
+    }
+
     @Test("repository selection merge updates existing entries in place and appends new ones")
     func repositorySelectionMergeUpdatesAndAppends() {
         let existingRepositories = [
-            FeatureSessionRepositorySelection(path: "/tmp/source/api", currentBranch: "main"),
+            FeatureSessionRepositorySelection(
+                path: "/tmp/source/api",
+                currentBranch: "main",
+                selectedBaseBranch: "release/1"
+            ),
             FeatureSessionRepositorySelection(path: "/tmp/source/web", currentBranch: "main"),
         ]
         let incomingRepositories = [
@@ -514,6 +690,176 @@ struct FeatureSessionServiceTests {
 
         #expect(mergedRepositories.map(\.name) == ["api", "web", "docs"])
         #expect(mergedRepositories.map(\.currentBranch) == ["release", "main", "main"])
+        #expect(mergedRepositories.map(\.selectedBaseBranch) == ["release/1", "main", "main"])
+    }
+
+    @Test("createSession uses selected base branch as worktree start point and persists it")
+    func createSessionUsesSelectedBaseBranchAsWorktreeStartPointAndPersistsIt() async throws {
+        let gitWorktreeClient = FeatureSessionGitWorktreeClientStub()
+        let gitRepositoryClient = FeatureSessionGitRepositoryClientStub(
+            branchesByPath: ["/tmp/source/api": ["main", "release/1"]]
+        )
+        let dependencies = makeDependencies(
+            gitRepositoryClient: gitRepositoryClient,
+            gitWorktreeClient: gitWorktreeClient
+        )
+
+        let project = try await FeatureSessionService.createSession(
+            name: "feature-session",
+            repositories: [selection(path: "/tmp/source/api", selectedBaseBranch: "release/1")],
+            sortOrder: 0,
+            dependencies: dependencies
+        )
+
+        let addWorktreeCall = try #require(gitWorktreeClient.addWorktreeCalls().first)
+        #expect(addWorktreeCall.startPoint == "release/1")
+        #expect(project.featureSession?.repositories.first?.baseBranch == "release/1")
+    }
+
+    @Test("createSession rejects missing selected base branch")
+    func createSessionRejectsMissingSelectedBaseBranch() async {
+        let gitRepositoryClient = FeatureSessionGitRepositoryClientStub(
+            branchesByPath: ["/tmp/source/api": ["main", "develop"]]
+        )
+        let dependencies = makeDependencies(gitRepositoryClient: gitRepositoryClient)
+
+        do {
+            _ = try await FeatureSessionService.createSession(
+                name: "feature-session",
+                repositories: [selection(path: "/tmp/source/api", selectedBaseBranch: "release/1")],
+                sortOrder: 0,
+                dependencies: dependencies
+            )
+            Issue.record("expected selectedBaseBranchMissing error")
+        } catch let error as FeatureSessionError {
+            guard case let .selectedBaseBranchMissing(repositoryName, branch) = error else {
+                Issue.record("unexpected error: \(error.localizedDescription)")
+                return
+            }
+            #expect(repositoryName == "api")
+            #expect(branch == "release/1")
+        } catch {
+            Issue.record("unexpected error: \(error.localizedDescription)")
+        }
+    }
+
+    @Test("addRepositories appends repositories and preserves primary repository selection")
+    func addRepositoriesAppendsRepositoriesAndPreservesPrimaryRepositorySelection() async throws {
+        let existingRepository = SessionRepository(
+            name: "api",
+            sourcePath: "/tmp/source/api",
+            sessionPath: "/tmp/sessions/feature-session/api",
+            originalBranch: "main",
+            baseBranch: "main",
+            sessionBranch: "feature-session"
+        )
+        let project = Project(
+            name: "feature-session",
+            path: "/tmp/sessions/feature-session",
+            mode: .featureSession,
+            featureSession: FeatureSession(
+                rootPath: "/tmp/sessions/feature-session",
+                repositories: [existingRepository],
+                primaryRepositoryID: existingRepository.id
+            )
+        )
+        let gitRepositoryClient = FeatureSessionGitRepositoryClientStub(
+            branchesByPath: ["/tmp/source/web": ["main", "develop"]]
+        )
+
+        let updatedProject = try await FeatureSessionService.addRepositories(
+            to: project,
+            repositories: [selection(path: "/tmp/source/web", selectedBaseBranch: "develop")],
+            dependencies: makeDependencies(gitRepositoryClient: gitRepositoryClient)
+        )
+
+        #expect(updatedProject.featureSession?.repositories.map(\.name) == ["api", "web"])
+        #expect(updatedProject.featureSession?.primaryRepositoryID == existingRepository.id)
+        #expect(updatedProject.featureSession?.repositories.last?.baseBranch == "develop")
+    }
+
+    @Test("addRepositories rejects repositories already present in the session")
+    func addRepositoriesRejectsRepositoriesAlreadyPresentInTheSession() async {
+        let existingRepository = SessionRepository(
+            name: "api",
+            sourcePath: "/tmp/source/api",
+            sessionPath: "/tmp/sessions/feature-session/api",
+            originalBranch: "main",
+            baseBranch: "main",
+            sessionBranch: "feature-session"
+        )
+        let project = Project(
+            name: "feature-session",
+            path: "/tmp/sessions/feature-session",
+            mode: .featureSession,
+            featureSession: FeatureSession(rootPath: "/tmp/sessions/feature-session", repositories: [existingRepository])
+        )
+
+        do {
+            _ = try await FeatureSessionService.addRepositories(
+                to: project,
+                repositories: [selection(path: "/tmp/source/api")],
+                dependencies: makeDependencies()
+            )
+            Issue.record("expected repositoriesAlreadyInSession error")
+        } catch let error as FeatureSessionError {
+            guard case let .repositoriesAlreadyInSession(repositoryNames) = error else {
+                Issue.record("unexpected error: \(error.localizedDescription)")
+                return
+            }
+            #expect(repositoryNames == ["api"])
+        } catch {
+            Issue.record("unexpected error: \(error.localizedDescription)")
+        }
+    }
+
+    @Test("addRepositories rolls back only newly created repositories")
+    func addRepositoriesRollsBackOnlyNewlyCreatedRepositories() async {
+        let sessionRoot = URL(fileURLWithPath: "/tmp/sessions/feature-session", isDirectory: true)
+        let fileClient = FeatureSessionFileClientStub(existingPaths: [sessionRoot.path])
+        let gitWorktreeClient = FeatureSessionGitWorktreeClientStub(
+            addFailuresByPath: [sessionRoot.appendingPathComponent("web", isDirectory: true).path: "add failed"]
+        )
+        let existingRepository = SessionRepository(
+            name: "api",
+            sourcePath: "/tmp/source/api",
+            sessionPath: sessionRoot.appendingPathComponent("api", isDirectory: true).path,
+            originalBranch: "main",
+            baseBranch: "main",
+            sessionBranch: "feature-session"
+        )
+        let project = Project(
+            name: "feature-session",
+            path: sessionRoot.path,
+            mode: .featureSession,
+            featureSession: FeatureSession(rootPath: sessionRoot.path, repositories: [existingRepository])
+        )
+        let dependencies = makeDependencies(
+            fileClient: fileClient,
+            gitWorktreeClient: gitWorktreeClient,
+            sessionRoot: sessionRoot
+        )
+
+        do {
+            _ = try await FeatureSessionService.addRepositories(
+                to: project,
+                repositories: [selection(path: "/tmp/source/docs"), selection(path: "/tmp/source/web")],
+                dependencies: dependencies
+            )
+            Issue.record("expected repository operation failure")
+        } catch let error as FeatureSessionError {
+            guard case let .repositoryOperationFailed(repositoryName, message) = error else {
+                Issue.record("unexpected error: \(error.localizedDescription)")
+                return
+            }
+            #expect(repositoryName == "web")
+            #expect(message.contains("add failed"))
+        } catch {
+            Issue.record("unexpected error: \(error.localizedDescription)")
+        }
+
+        #expect(gitWorktreeClient.removedWorktreePaths() == [sessionRoot.appendingPathComponent("docs", isDirectory: true).path])
+        #expect(fileClient.removedPaths.contains(sessionRoot.path) == false)
     }
 
     private func makeDependencies(
@@ -531,7 +877,24 @@ struct FeatureSessionServiceTests {
         )
     }
 
-    private func selection(path: String, currentBranch: String = "main") -> FeatureSessionRepositorySelection {
-        FeatureSessionRepositorySelection(path: path, currentBranch: currentBranch)
+    private func selection(
+        path: String,
+        currentBranch: String = "main",
+        selectedBaseBranch: String? = nil
+    ) -> FeatureSessionRepositorySelection {
+        FeatureSessionRepositorySelection(
+            path: path,
+            currentBranch: currentBranch,
+            selectedBaseBranch: selectedBaseBranch
+        )
+    }
+}
+
+@MainActor
+final class EventCollector {
+    private(set) var all: [FeatureSessionCreationEvent] = []
+
+    func append(_ featureSessionCreationEvent: FeatureSessionCreationEvent) {
+        all.append(featureSessionCreationEvent)
     }
 }

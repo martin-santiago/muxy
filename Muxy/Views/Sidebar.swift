@@ -11,13 +11,13 @@ enum SidebarLayout {
 }
 
 struct Sidebar: View {
-    @Environment(AppState.self) private var appState
-    @Environment(ProjectStore.self) private var projectStore
-    @Environment(WorktreeStore.self) private var worktreeStore
+    @Environment(AppState.self) var appState
+    @Environment(ProjectStore.self) var projectStore
+    @Environment(WorktreeStore.self) var worktreeStore
     @State private var dragState = ProjectDragState()
     @State private var expanded = UserDefaults.standard.bool(forKey: "muxy.sidebarExpanded")
     @State private var showAddRootOptions = false
-    @State private var showCreateFeatureSessionSheet = false
+    @State private var featureSessionSheetMode: CreateFeatureSessionSheet.Mode?
 
     var body: some View {
         VStack(spacing: 0) {
@@ -40,20 +40,32 @@ struct Sidebar: View {
                 )
             }
             Button("Create Feature Session") {
-                showCreateFeatureSessionSheet = true
+                featureSessionSheetMode = .create
             }
         }
-        .sheet(isPresented: $showCreateFeatureSessionSheet) {
-            CreateFeatureSessionSheet { sessionName, repositories in
-                let project = try await FeatureSessionService.createSession(
-                    name: sessionName,
-                    repositories: repositories,
-                    sortOrder: projectStore.projects.count
-                )
-                projectStore.add(project)
-                worktreeStore.ensurePrimary(for: project)
-                guard let primaryWorktree = worktreeStore.primary(for: project.id) else { return }
-                appState.selectProject(project, worktree: primaryWorktree)
+        .sheet(item: $featureSessionSheetMode) { mode in
+            CreateFeatureSessionSheet(mode: mode) { selectedMode, sessionName, repositories, copyHiddenAndIgnoredFiles, onProgress in
+                switch selectedMode {
+                case .create:
+                    let project = try await FeatureSessionService.createSession(
+                        name: sessionName,
+                        repositories: repositories,
+                        sortOrder: projectStore.projects.count,
+                        copyHiddenAndIgnoredFiles: copyHiddenAndIgnoredFiles,
+                        onProgress: onProgress
+                    )
+                    projectStore.add(project)
+                    worktreeStore.ensurePrimary(for: project)
+                    guard let primaryWorktree = worktreeStore.primary(for: project.id) else { return }
+                    appState.selectProject(project, worktree: primaryWorktree)
+                case let .append(project):
+                    try await appendRepositories(
+                        to: project,
+                        repositories: repositories,
+                        copyHiddenAndIgnoredFiles: copyHiddenAndIgnoredFiles,
+                        onProgress: onProgress
+                    )
+                }
             }
         }
     }
@@ -84,6 +96,9 @@ struct Sidebar: View {
                                 isAnyDragging: dragState.draggedID != nil,
                                 onSelect: { select(project) },
                                 onRemove: { remove(project) },
+                                onAddRepositoryToFeatureSession: project.isFeatureSession ? {
+                                    featureSessionSheetMode = .append(project)
+                                } : nil,
                                 onRename: { projectStore.rename(id: project.id, to: $0) },
                                 onSetLogo: { projectStore.setLogo(id: project.id, to: $0) },
                                 onSetIconColor: { projectStore.setIconColor(id: project.id, to: $0) }
@@ -95,6 +110,9 @@ struct Sidebar: View {
                                 isAnyDragging: dragState.draggedID != nil,
                                 onSelect: { select(project) },
                                 onRemove: { remove(project) },
+                                onAddRepositoryToFeatureSession: project.isFeatureSession ? {
+                                    featureSessionSheetMode = .append(project)
+                                } : nil,
                                 onRename: { projectStore.rename(id: project.id, to: $0) },
                                 onSetLogo: { projectStore.setLogo(id: project.id, to: $0) },
                                 onSetIconColor: { projectStore.setIconColor(id: project.id, to: $0) }
