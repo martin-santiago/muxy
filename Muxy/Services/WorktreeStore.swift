@@ -26,6 +26,10 @@ final class WorktreeStore {
 
     func loadAll(projects: [Project]) {
         for project in projects {
+            if let featureSessionWorktrees = FeatureSessionWorktreeFactory.worktrees(for: project) {
+                setWorktrees(featureSessionWorktrees, for: project.id)
+                continue
+            }
             do {
                 var loaded = try persistence.loadWorktrees(projectID: project.id)
                 if !loaded.contains(where: \.isPrimary) {
@@ -42,6 +46,10 @@ final class WorktreeStore {
     }
 
     func ensurePrimary(for project: Project) {
+        if let featureSessionWorktrees = FeatureSessionWorktreeFactory.worktrees(for: project) {
+            setWorktrees(featureSessionWorktrees, for: project.id)
+            return
+        }
         var list = worktrees[project.id] ?? []
         if list.contains(where: \.isPrimary) { return }
         list.insert(makePrimary(for: project), at: 0)
@@ -49,17 +57,11 @@ final class WorktreeStore {
         save(projectID: project.id)
     }
 
-    func list(for projectID: UUID) -> [Worktree] {
-        worktrees[projectID] ?? []
-    }
+    func list(for projectID: UUID) -> [Worktree] { worktrees[projectID] ?? [] }
 
-    func projectID(forWorktreePath path: String) -> UUID? {
-        projectIDByPath[path]
-    }
+    func projectID(forWorktreePath path: String) -> UUID? { projectIDByPath[path] }
 
-    func primary(for projectID: UUID) -> Worktree? {
-        list(for: projectID).first(where: { $0.isPrimary })
-    }
+    func primary(for projectID: UUID) -> Worktree? { list(for: projectID).first(where: { $0.isPrimary }) }
 
     func worktree(projectID: UUID, worktreeID: UUID) -> Worktree? {
         list(for: projectID).first(where: { $0.id == worktreeID })
@@ -87,6 +89,10 @@ final class WorktreeStore {
     }
 
     func refreshFromGit(project: Project) async throws -> [Worktree] {
+        if let featureSessionWorktrees = FeatureSessionWorktreeFactory.worktrees(for: project) {
+            setWorktrees(featureSessionWorktrees, for: project.id)
+            return featureSessionWorktrees
+        }
         ensurePrimary(for: project)
         let records = try await listGitWorktrees(project.path).filter { !$0.isBare && !$0.isPrunable }
         var list = worktrees[project.id] ?? []

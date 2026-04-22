@@ -26,7 +26,7 @@ struct WorktreePopover: View {
             filterKey: { worktree in
                 worktree.name + " " + (worktree.branch ?? "")
             },
-            searchPlaceholder: "Search worktrees…",
+            searchPlaceholder: project.isFeatureSession ? "Search repositories…" : "Search worktrees…",
             emptyLabel: "No matches",
             footerActions: footerActions,
             onSelect: { worktree in
@@ -42,12 +42,8 @@ struct WorktreePopover: View {
                         appState.selectWorktree(projectID: project.id, worktree: worktree)
                         onDismiss()
                     },
-                    onRename: { newName in
-                        worktreeStore.rename(
-                            worktreeID: worktree.id,
-                            in: project.id,
-                            to: newName
-                        )
+                    onRename: worktree.source == .featureSession ? nil : { newName in
+                        worktreeStore.rename(worktreeID: worktree.id, in: project.id, to: newName)
                     },
                     onRemove: worktree.canBeRemoved ? {
                         Task { await requestRemove(worktree: worktree) }
@@ -141,7 +137,7 @@ private struct WorktreePopoverRow: View {
     let selected: Bool
     let isHighlighted: Bool
     let onSelect: () -> Void
-    let onRename: (String) -> Void
+    let onRename: ((String) -> Void)?
     let onRemove: (() -> Void)?
 
     @State private var hovered = false
@@ -215,16 +211,22 @@ private struct WorktreePopoverRow: View {
             onSelect()
         }
         .contextMenu {
-            if worktree.isPrimary {
+            if worktree.source == .featureSession {
+                Text("Session repository").font(.system(size: 11))
+            } else if worktree.isPrimary {
                 Text("Primary worktree").font(.system(size: 11))
             } else if let onRemove {
-                Button("Rename") { startRename() }
-                Divider()
+                if onRename != nil {
+                    Button("Rename") { startRename() }
+                    Divider()
+                }
                 Button("Remove", role: .destructive, action: onRemove)
-            } else {
+            } else if onRename != nil {
                 Button("Rename") { startRename() }
                 Divider()
                 Text("External worktree").font(.system(size: 11))
+            } else {
+                Text("Worktree").font(.system(size: 11))
             }
         }
     }
@@ -253,7 +255,7 @@ private struct WorktreePopoverRow: View {
 
     private func commitRename() {
         let trimmed = renameText.trimmingCharacters(in: .whitespaces)
-        if !trimmed.isEmpty { onRename(trimmed) }
+        if !trimmed.isEmpty { onRename?(trimmed) }
         isRenaming = false
     }
 

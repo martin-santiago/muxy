@@ -25,17 +25,13 @@ struct ProjectRow: View {
     @State private var isRefreshingWorktrees = false
     @State private var showColorPicker = false
 
-    private var isActive: Bool {
-        appState.activeProjectID == project.id
-    }
+    private var isActive: Bool { appState.activeProjectID == project.id }
 
-    private var worktrees: [Worktree] {
-        worktreeStore.list(for: project.id)
-    }
+    private var worktrees: [Worktree] { worktreeStore.list(for: project.id) }
 
-    private var displayLetter: String {
-        String(project.name.prefix(1)).uppercased()
-    }
+    private var supportsWorktreeSelection: Bool { project.isFeatureSession || isGitRepo }
+
+    private var displayLetter: String { String(project.name.prefix(1)).uppercased() }
 
     var body: some View {
         projectIcon
@@ -71,12 +67,16 @@ struct ProjectRow: View {
                 }
                 Divider()
                 Button("Rename Project") { startRename() }
-                if isGitRepo {
+                if supportsWorktreeSelection {
                     Divider()
-                    Button("Refresh Worktrees") { Task { await refreshWorktrees() } }
-                    Button("New Worktree…") { showCreateWorktreeSheet = true }
+                    if isGitRepo {
+                        Button("Refresh Worktrees") { Task { await refreshWorktrees() } }
+                        Button("New Worktree…") { showCreateWorktreeSheet = true }
+                    }
                     if worktrees.count > 1 {
-                        Button("Switch Worktree…") { showWorktreePopover = true }
+                        Button(project.isFeatureSession ? "Choose Repository…" : "Switch Worktree…") {
+                            showWorktreePopover = true
+                        }
                     }
                 }
                 Divider()

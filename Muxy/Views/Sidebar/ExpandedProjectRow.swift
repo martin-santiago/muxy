@@ -44,6 +44,10 @@ struct ExpandedProjectRow: View {
         worktrees.first { $0.id == activeWorktreeID }
     }
 
+    private var supportsWorktreeSelection: Bool {
+        project.isFeatureSession || isGitRepo
+    }
+
     private var displayLetter: String {
         String(project.name.prefix(1)).uppercased()
     }
@@ -51,18 +55,18 @@ struct ExpandedProjectRow: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
             projectHeader
-            if worktreesExpanded, isGitRepo {
+            if worktreesExpanded, supportsWorktreeSelection {
                 worktreeList
             }
         }
         .task(id: project.path) {
             isGitRepo = await GitWorktreeService.shared.isGitRepository(project.path)
-            if autoExpandWorktrees, isActive, isGitRepo {
+            if autoExpandWorktrees, isActive, supportsWorktreeSelection {
                 worktreesExpanded = true
             }
         }
         .onChange(of: isActive) { _, active in
-            guard autoExpandWorktrees, active, isGitRepo else { return }
+            guard autoExpandWorktrees, active, supportsWorktreeSelection else { return }
             withAnimation(.easeInOut(duration: 0.15)) {
                 worktreesExpanded = true
             }
@@ -132,8 +136,8 @@ struct ExpandedProjectRow: View {
                     .lineLimit(1)
                     .truncationMode(.tail)
 
-                if isGitRepo, let worktree = activeWorktree {
-                    Text(worktree.isPrimary ? "primary" : worktree.name)
+                if supportsWorktreeSelection, let worktree = activeWorktree {
+                    Text(activeWorktreeLabel(for: worktree))
                         .font(.system(size: 10, design: .monospaced))
                         .foregroundStyle(MuxyTheme.fgDim)
                         .lineLimit(1)
@@ -143,7 +147,7 @@ struct ExpandedProjectRow: View {
 
             Spacer(minLength: 4)
 
-            if isGitRepo {
+            if supportsWorktreeSelection {
                 worktreeChevron
             }
         }
@@ -164,7 +168,7 @@ struct ExpandedProjectRow: View {
         }
         .onTapGesture {
             guard !isAnyDragging else { return }
-            if isActive, isGitRepo {
+            if isActive, supportsWorktreeSelection {
                 withAnimation(.easeInOut(duration: 0.15)) {
                     worktreesExpanded.toggle()
                 }
@@ -237,12 +241,8 @@ struct ExpandedProjectRow: View {
                     onSelect: {
                         appState.selectWorktree(projectID: project.id, worktree: worktree)
                     },
-                    onRename: { newName in
-                        worktreeStore.rename(
-                            worktreeID: worktree.id,
-                            in: project.id,
-                            to: newName
-                        )
+                    onRename: worktree.source == .featureSession ? nil : { newName in
+                        worktreeStore.rename(worktreeID: worktree.id, in: project.id, to: newName)
                     },
                     onRemove: worktree.canBeRemoved ? {
                         Task { await requestRemove(worktree: worktree) }
@@ -250,8 +250,10 @@ struct ExpandedProjectRow: View {
                 )
             }
 
-            ExpandedNewWorktreeButton {
-                showCreateWorktreeSheet = true
+            if isGitRepo {
+                ExpandedNewWorktreeButton {
+                    showCreateWorktreeSheet = true
+                }
             }
         }
         .padding(.top, 2)
@@ -260,10 +262,17 @@ struct ExpandedProjectRow: View {
 
     private var projectHeaderAccessibilityLabel: String {
         var label = project.name
-        if isGitRepo, let worktree = activeWorktree {
-            label += ", worktree: \(worktree.isPrimary ? "primary" : worktree.name)"
+        if supportsWorktreeSelection, let worktree = activeWorktree {
+            label += ", worktree: \(activeWorktreeLabel(for: worktree))"
         }
         return label
+    }
+
+    private func activeWorktreeLabel(for worktree: Worktree) -> String {
+        if project.isFeatureSession {
+            return worktree.name
+        }
+        return worktree.isPrimary ? "primary" : worktree.name
     }
 
     private var resolvedLogo: NSImage? {
@@ -419,7 +428,7 @@ private struct ExpandedWorktreeRow: View {
     let worktree: Worktree
     let selected: Bool
     let onSelect: () -> Void
-    let onRename: (String) -> Void
+    let onRename: ((String) -> Void)?
     let onRemove: (() -> Void)?
 
     @State private var hovered = false
@@ -496,16 +505,22 @@ private struct ExpandedWorktreeRow: View {
             onSelect()
         }
         .contextMenu {
-            if worktree.isPrimary {
+            if worktree.source == .featureSession {
+                Text("Session repository").font(.system(size: 11))
+            } else if worktree.isPrimary {
                 Text("Primary worktree").font(.system(size: 11))
             } else if let onRemove {
-                Button("Rename") { startRename() }
-                Divider()
+                if onRename != nil {
+                    Button("Rename") { startRename() }
+                    Divider()
+                }
                 Button("Remove", role: .destructive, action: onRemove)
-            } else {
+            } else if onRename != nil {
                 Button("Rename") { startRename() }
                 Divider()
                 Text("External worktree").font(.system(size: 11))
+            } else {
+                Text("Worktree").font(.system(size: 11))
             }
         }
         .accessibilityElement(children: .combine)
@@ -543,7 +558,7 @@ private struct ExpandedWorktreeRow: View {
 
     private func commitRename() {
         let trimmed = renameText.trimmingCharacters(in: .whitespaces)
-        if !trimmed.isEmpty { onRename(trimmed) }
+        if !trimmed.isEmpty { onRename?(trimmed) }
         isRenaming = false
     }
 

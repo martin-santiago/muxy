@@ -64,10 +64,19 @@ struct MuxyApp: App {
                             if let project = projectStore.projects.first(where: { $0.id == id }) {
                                 let knownWorktrees = worktreeStore.list(for: id)
                                 Task.detached {
-                                    await WorktreeStore.cleanupOnDisk(
-                                        for: project,
-                                        knownWorktrees: knownWorktrees
-                                    )
+                                    if project.isFeatureSession {
+                                        let cleanupReport = await FeatureSessionService.deleteSession(project: project)
+                                        if cleanupReport.hasIssues {
+                                            await MainActor.run {
+                                                FeatureSessionCleanupAlertPresenter.present(cleanupReport)
+                                            }
+                                        }
+                                    } else {
+                                        await WorktreeStore.cleanupOnDisk(
+                                            for: project,
+                                            knownWorktrees: knownWorktrees
+                                        )
+                                    }
                                 }
                             }
                             projectStore.remove(id: id)

@@ -62,6 +62,7 @@ Muxy/
     TerminalSettings.swift    Terminal preference keys and quick-select label layout helpers
     ProjectLifecyclePreferences.swift  Project lifecycle preferences (keep-open-when-no-tabs)
     Project.swift             Project folder metadata
+    FeatureSession.swift      Feature session metadata and tracked repositories
     Worktree.swift            Per-project worktree slot (primary or git worktree)
     WorktreeKey.swift         Hashable (projectID, worktreeID) key for workspace maps
     WorktreeConfig.swift      Decoder for .muxy/worktree.json setup commands
@@ -99,6 +100,7 @@ Muxy/
     WorktreeStore.swift       @Observable store for per-project worktrees
     WorktreePersistence.swift JSON persistence for worktrees (one file per project)
     ProjectOpenService.swift  Shared open-project flow used by commands and sidebar
+    FeatureSessionService.swift  Creates and deletes feature sessions backed by Git worktrees
     WorktreeSetupRunner.swift Dispatches .muxy/worktree.json setup commands to a new tab
     WorkspacePersistence.swift JSON persistence for workspaces
     JSONFilePersistence.swift Shared App Support directory helper
@@ -118,6 +120,7 @@ Muxy/
       ProjectIconColorPicker.swift  Preset color palette popover for tinting the default letter icon
       WorktreePopover.swift     Worktree picker popover triggered from the active project row
       CreateWorktreeSheet.swift Sheet for creating a new git worktree
+      CreateFeatureSessionSheet.swift Sheet for creating a feature session from Git repositories
     ThemePicker.swift         Theme selection popover (hosted in topbar right)
     WelcomeView.swift         Empty state view
     Components/
@@ -172,7 +175,7 @@ Muxy/
 ## Hierarchy
 
 ```
-Project → Worktree → SplitNode (splits/tab areas) → TerminalTab → Pane
+Project or Feature Session → Worktree → SplitNode (splits/tab areas) → TerminalTab → Pane
 ```
 
 Each project has at least one **primary** worktree pointing at `Project.path`. Git
@@ -183,6 +186,19 @@ that are imported into the sidebar with a manual refresh. Workspace state is key
 `WorktreeKey(projectID, worktreeID)` in `AppState` so every per-project map is
 actually per-worktree. `AppState.activeWorktreeID[projectID]` tracks which
 worktree is currently visible for each project.
+
+Feature sessions reuse the same top-level project slot but set `Project.mode` to
+`.featureSession` and persist `FeatureSession` metadata inside `projects.json`.
+The visible container remains `~/sessions/<session-name>/`, but the active
+workspace, file tree, terminal cwd, and VCS state are bound to one of the
+session repo worktrees inside that directory rather than the session root
+itself.
+Each selected Git repository is tracked as a `SessionRepository` with its source
+path, original branch, session branch, and created worktree path under that root.
+Session creation currently supports Git repositories only: Muxy runs `git pull` in
+each selected repo, then creates one worktree per repo on a new branch named
+exactly like the session. Deleting a feature session removes those worktrees,
+deletes the created branches, and deletes the session root.
 
 ## Data Flow
 
@@ -204,7 +220,8 @@ User action → AppState.dispatch() → WorkspaceReducer.reduce()
   terminal pane with the configured Ghostty startup command. The size thresholds in
   `EditorTabState` apply only to the built-in editor path.
 - **GhosttyKit**: C module wrapping `ghostty.h`. Precompiled xcframework from `muxy-app/ghostty` fork. Surfaces created/destroyed via `TerminalViewRegistry`.
-- **Persistence**: All files in `~/Library/Application Support/Muxy/`. Shared directory helper: `MuxyFileStorage`. Worktrees are persisted per-project at `worktrees/{projectID}.json`, including whether a secondary worktree is Muxy-managed or externally discovered. Git projects can manually refresh this list from `git worktree list --porcelain` to import existing worktrees without deleting absent entries; paths are matched after symlink resolution so a repo opened via a symlinked path still collapses onto a single primary entry. Externally discovered worktrees are never touched by Muxy's `cleanupOnDisk` paths (project removal, post-merge cleanup, manual removal) — they can only be unregistered by the user in the underlying repo. Worktree setup commands live in-repo at `{Project.path}/.muxy/worktree.json`.
+- **Persistence**: Most app state lives in `~/Library/Application Support/Muxy/`. Shared directory helper: `MuxyFileStorage`. Worktrees are persisted per-project at `worktrees/{projectID}.json`, including whether a secondary worktree is Muxy-managed or externally discovered. Feature session roots live in the user-visible fixed directory `~/sessions/{session-name}/`, while their tracked repositories are embedded in `projects.json`. Git projects can manually refresh this list from `git worktree list --porcelain` to import existing worktrees without deleting absent entries; paths are matched after symlink resolution so a repo opened via a symlinked path still collapses onto a single primary entry. Externally discovered worktrees are never touched by Muxy's `cleanupOnDisk` paths (project removal, post-merge cleanup, manual removal) — they can only be unregistered by the user in the underlying repo. Worktree setup commands live in-repo at `{Project.path}/.muxy/worktree.json`.
+- **Feature Sessions**: `WorktreeStore` synthesizes sidebar worktree entries directly from `FeatureSession.repositories`, using deterministic worktree IDs derived from each session repo path so restored workspace state and notifications keep targeting the same repo after relaunch. Feature sessions do not expose generic worktree creation, refresh, rename, or removal actions because the session root itself is not a Git repo.
 - **Ghostty Config**: Managed by `MuxyConfig`, stored at `~/Library/Application Support/Muxy/ghostty.conf`. Seeded from `~/.config/ghostty/config` on first run.
 - **Updates**: Sparkle framework via `UpdateService`.
 - **Window Title**: `NSWindow.title` is hidden visually (`titleVisibility = .hidden`) but set

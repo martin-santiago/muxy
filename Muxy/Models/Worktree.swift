@@ -3,6 +3,7 @@ import Foundation
 enum WorktreeSource: String, Codable, Hashable {
     case muxy
     case external
+    case featureSession
 }
 
 struct Worktree: Identifiable, Codable, Hashable {
@@ -40,7 +41,7 @@ struct Worktree: Identifiable, Codable, Hashable {
     }
 
     var canBeRemoved: Bool {
-        !isPrimary && !isExternallyManaged
+        !isPrimary && !isExternallyManaged && source != .featureSession
     }
 
     private enum CodingKeys: String, CodingKey {

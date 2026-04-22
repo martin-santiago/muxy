@@ -139,6 +139,17 @@ struct GitRepositoryService {
         return result.stdout.trimmingCharacters(in: .whitespacesAndNewlines)
     }
 
+    func isValidBranchName(_ branch: String, workingDirectory: String) async -> Bool {
+        guard !branch.isEmpty else { return false }
+        let result = try? await GitProcessRunner.runCommand(
+            executable: "/usr/bin/env",
+            arguments: ["git", "check-ref-format", "--branch", branch],
+            workingDirectory: workingDirectory
+        )
+        guard let result else { return false }
+        return result.status == 0
+    }
+
     func headSha(repoPath: String) async -> String? {
         let result = try? await GitProcessRunner.runGit(
             repoPath: repoPath,

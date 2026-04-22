@@ -38,4 +38,19 @@ enum MuxyFileStorage {
     static func worktreeDirectory(forProjectID projectID: UUID, name: String) -> URL {
         worktreeRoot(forProjectID: projectID).appendingPathComponent(name, isDirectory: true)
     }
+
+    static func sessionsRootDirectory() -> URL {
+        let dir = FileManager.default.homeDirectoryForCurrentUser
+            .appendingPathComponent("sessions", isDirectory: true)
+        try? FileManager.default.createDirectory(
+            at: dir,
+            withIntermediateDirectories: true,
+            attributes: [.posixPermissions: 0o700]
+        )
+        return dir
+    }
+
+    static func sessionRoot(for name: String) -> URL {
+        sessionsRootDirectory().appendingPathComponent(name, isDirectory: true)
+    }
 }

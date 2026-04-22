@@ -75,20 +75,19 @@ actor GitWorktreeService: GitWorktreeListing {
         return parsePorcelain(result.stdout)
     }
 
-    static let allowedBranchCharacters = CharacterSet.alphanumerics
-        .union(CharacterSet(charactersIn: "._/-"))
+    private func validateBranchName(repoPath: String, branch: String) throws {
+        guard !branch.isEmpty else {
+            throw GitWorktreeError.commandFailed("Invalid branch name.")
+        }
 
-    private static func validateBranchName(_ branch: String) throws {
-        guard !branch.isEmpty,
-              !branch.hasPrefix("-"),
-              branch.unicodeScalars.allSatisfy({ Self.allowedBranchCharacters.contains($0) })
-        else {
+        let result = try runGit(repoPath: repoPath, arguments: ["check-ref-format", "--branch", branch])
+        guard result.status == 0 else {
             throw GitWorktreeError.commandFailed("Invalid branch name.")
         }
     }
 
     func addWorktree(repoPath: String, path: String, branch: String, createBranch: Bool) async throws {
-        try Self.validateBranchName(branch)
+        try validateBranchName(repoPath: repoPath, branch: branch)
         var args: [String] = ["worktree", "add"]
         if createBranch {
             args += ["-b", branch, "--", path]
@@ -116,7 +115,7 @@ actor GitWorktreeService: GitWorktreeListing {
     }
 
     func deleteBranch(repoPath: String, branch: String, force: Bool = true) async throws {
-        try Self.validateBranchName(branch)
+        try validateBranchName(repoPath: repoPath, branch: branch)
         let args = ["branch", force ? "-D" : "-d", "--", branch]
         let result = try runGit(repoPath: repoPath, arguments: args)
         guard result.status == 0 else {

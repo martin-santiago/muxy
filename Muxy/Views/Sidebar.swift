@@ -16,6 +16,8 @@ struct Sidebar: View {
     @Environment(WorktreeStore.self) private var worktreeStore
     @State private var dragState = ProjectDragState()
     @State private var expanded = UserDefaults.standard.bool(forKey: "muxy.sidebarExpanded")
+    @State private var showAddRootOptions = false
+    @State private var showCreateFeatureSessionSheet = false
 
     var body: some View {
         VStack(spacing: 0) {
@@ -29,6 +31,31 @@ struct Sidebar: View {
         .onReceive(NotificationCenter.default.publisher(for: .toggleSidebar)) { _ in
             toggleExpanded()
         }
+        .confirmationDialog("Add Root", isPresented: $showAddRootOptions) {
+            Button("Open Project") {
+                ProjectOpenService.openProject(
+                    appState: appState,
+                    projectStore: projectStore,
+                    worktreeStore: worktreeStore
+                )
+            }
+            Button("Create Feature Session") {
+                showCreateFeatureSessionSheet = true
+            }
+        }
+        .sheet(isPresented: $showCreateFeatureSessionSheet) {
+            CreateFeatureSessionSheet { sessionName, repositories in
+                let project = try await FeatureSessionService.createSession(
+                    name: sessionName,
+                    repositories: repositories,
+                    sortOrder: projectStore.projects.count
+                )
+                projectStore.add(project)
+                worktreeStore.ensurePrimary(for: project)
+                guard let primaryWorktree = worktreeStore.primary(for: project.id) else { return }
+                appState.selectProject(project, worktree: primaryWorktree)
+            }
+        }
     }
 
     private func toggleExpanded() {
@@ -40,11 +67,7 @@ struct Sidebar: View {
 
     private var addButton: some View {
         AddProjectButton(expanded: expanded) {
-            ProjectOpenService.openProject(
-                appState: appState,
-                projectStore: projectStore,
-                worktreeStore: worktreeStore
-            )
+            showAddRootOptions = true
         }
         .help(shortcutTooltip("Add Project", for: .openProject))
     }
@@ -138,7 +161,16 @@ struct Sidebar: View {
         let capturedProject = project
         let knownWorktrees = worktreeStore.list(for: project.id)
         Task.detached {
-            await WorktreeStore.cleanupOnDisk(for: capturedProject, knownWorktrees: knownWorktrees)
+            if capturedProject.isFeatureSession {
+                let cleanupReport = await FeatureSessionService.deleteSession(project: capturedProject)
+                if cleanupReport.hasIssues {
+                    await MainActor.run {
+                        FeatureSessionCleanupAlertPresenter.present(cleanupReport)
+                    }
+                }
+            } else {
+                await WorktreeStore.cleanupOnDisk(for: capturedProject, knownWorktrees: knownWorktrees)
+            }
         }
         appState.removeProject(project.id)
         projectStore.remove(id: project.id)
@@ -178,59 +210,6 @@ private struct ProjectDragState {
     var draggedID: UUID?
     var frames: [UUID: CGRect] = [:]
     var lastReorderTargetID: UUID?
-}
-
-private struct AddProjectButton: View {
-    var expanded: Bool = false
-    let action: () -> Void
-    @State private var hovered = false
-
-    var body: some View {
-        Button(action: action) {
-            if expanded {
-                expandedLayout
-            } else {
-                collapsedLayout
-            }
-        }
-        .buttonStyle(.plain)
-        .onHover { hovered = $0 }
-        .accessibilityLabel("Add Project")
-    }
-
-    private var collapsedLayout: some View {
-        ZStack {
-            RoundedRectangle(cornerRadius: 8)
-                .fill(MuxyTheme.hover)
-            Image(systemName: "plus")
-                .font(.system(size: 16, weight: .medium))
-                .foregroundStyle(hovered ? MuxyTheme.accent : MuxyTheme.fgMuted)
-        }
-        .frame(width: 32, height: 32)
-        .padding(3)
-    }
-
-    private var expandedLayout: some View {
-        HStack(spacing: 8) {
-            ZStack {
-                RoundedRectangle(cornerRadius: 6)
-                    .fill(MuxyTheme.surface)
-                Image(systemName: "plus")
-                    .font(.system(size: 11, weight: .bold))
-                    .foregroundStyle(hovered ? MuxyTheme.accent : MuxyTheme.fgMuted)
-            }
-            .frame(width: 24, height: 24)
-
-            Text("Add Project")
-                .font(.system(size: 12, weight: .medium))
-                .foregroundStyle(hovered ? MuxyTheme.accent : MuxyTheme.fgMuted)
-                .lineLimit(1)
-            Spacer()
-        }
-        .padding(.horizontal, 8)
-        .padding(.vertical, 6)
-        .background(hovered ? MuxyTheme.hover : Color.clear, in: RoundedRectangle(cornerRadius: 8))
-    }
 }
 
 struct SidebarFooter: View {
