@@ -227,6 +227,12 @@ struct MuxyCommands: Commands {
             }
             .shortcut(for: .switchWorktree, store: keyBindings)
 
+            Button("Expand/Collapse Selected Project") {
+                guard isMainWindowFocused else { return }
+                performShortcutAction(.toggleSelectedProjectExpansion)
+            }
+            .shortcut(for: .toggleSelectedProjectExpansion, store: keyBindings)
+
             Divider()
 
             Button("Next Project") {

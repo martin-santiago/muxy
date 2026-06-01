@@ -130,6 +130,9 @@ struct ShortcutActionDispatcher {
         case .switchWorktree:
             notificationCenter.post(name: .switchWorktree, object: nil)
             return true
+        case .toggleSelectedProjectExpansion:
+            notificationCenter.post(name: .toggleSelectedProjectExpansion, object: nil)
+            return true
         case .saveFile:
             notificationCenter.post(name: .saveActiveEditor, object: nil)
             return true

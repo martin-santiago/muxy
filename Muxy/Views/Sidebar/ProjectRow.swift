@@ -36,8 +36,10 @@ struct ProjectRow: View {
 
     var body: some View {
         projectIcon
+            .padding(4)
+            .background(rowBackground, in: RoundedRectangle(cornerRadius: 12))
             .help(project.name)
-            .contentShape(RoundedRectangle(cornerRadius: 8))
+            .contentShape(RoundedRectangle(cornerRadius: 12))
             .accessibilityElement(children: .combine)
             .accessibilityLabel(project.name)
             .accessibilityValue(isActive ? "Active" : "")
@@ -202,6 +204,12 @@ struct ProjectRow: View {
             return foreground
         }
         return isActive ? MuxyTheme.fg : MuxyTheme.fgMuted
+    }
+
+    private var rowBackground: AnyShapeStyle {
+        if isActive { return AnyShapeStyle(MuxyTheme.accentSoft) }
+        if hovered { return AnyShapeStyle(MuxyTheme.hover) }
+        return AnyShapeStyle(Color.clear)
     }
 
     private var showShortcutBadge: Bool {

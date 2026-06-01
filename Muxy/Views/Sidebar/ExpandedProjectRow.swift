@@ -68,9 +68,11 @@ struct ExpandedProjectRow: View {
         }
         .onChange(of: isActive) { _, active in
             guard autoExpandWorktrees, active, supportsWorktreeSelection else { return }
-            withAnimation(.easeInOut(duration: 0.15)) {
-                worktreesExpanded = true
-            }
+            setWorktreesExpanded(true)
+        }
+        .onReceive(NotificationCenter.default.publisher(for: .toggleSelectedProjectExpansion)) { _ in
+            guard isActive, supportsWorktreeSelection else { return }
+            setWorktreesExpanded(!worktreesExpanded)
         }
         .contextMenu {
             Button("Set Logo...") { pickLogoImage() }
@@ -174,9 +176,7 @@ struct ExpandedProjectRow: View {
         .onTapGesture {
             guard !isAnyDragging else { return }
             if isActive, supportsWorktreeSelection {
-                withAnimation(.easeInOut(duration: 0.15)) {
-                    worktreesExpanded.toggle()
-                }
+                setWorktreesExpanded(!worktreesExpanded)
             } else {
                 onSelect()
             }
@@ -192,9 +192,7 @@ struct ExpandedProjectRow: View {
 
     private var worktreeChevron: some View {
         Button {
-            withAnimation(.easeInOut(duration: 0.15)) {
-                worktreesExpanded.toggle()
-            }
+            setWorktreesExpanded(!worktreesExpanded)
         } label: {
             Image(systemName: "chevron.right")
                 .font(.system(size: 9, weight: .semibold))
@@ -314,6 +312,12 @@ struct ExpandedProjectRow: View {
         return ModifierKeyMonitor.shared.isHolding(
             modifiers: KeyBindingStore.shared.combo(for: action).modifiers
         )
+    }
+
+    private func setWorktreesExpanded(_ isExpanded: Bool) {
+        withAnimation(.easeInOut(duration: 0.15)) {
+            worktreesExpanded = isExpanded
+        }
     }
 
     private func pickLogoImage() {

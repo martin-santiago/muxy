@@ -81,6 +81,16 @@ struct KeyBindingTests {
         #expect(combos.count == unique.count)
     }
 
+    @Test("toggle selected project expansion has project navigation metadata")
+    func toggleSelectedProjectExpansionMetadata() {
+        #expect(ShortcutAction.toggleSelectedProjectExpansion.displayName == "Expand/Collapse Selected Project")
+        #expect(ShortcutAction.toggleSelectedProjectExpansion.category == "Project Navigation")
+        #expect(ShortcutAction.toggleSelectedProjectExpansion.scope == .mainWindow)
+        #expect(KeyBinding.defaults.contains {
+            $0.action == .toggleSelectedProjectExpansion && $0.combo == KeyCombo(key: "\\", control: true)
+        })
+    }
+
     @Test("KeyBinding Codable round-trip")
     func codableRoundTrip() throws {
         let binding = KeyBinding(

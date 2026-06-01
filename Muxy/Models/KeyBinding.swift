@@ -49,6 +49,7 @@ enum ShortcutAction: String, Codable, CaseIterable, Identifiable {
     case openVCSTab
     case quickOpen
     case switchWorktree
+    case toggleSelectedProjectExpansion
     case saveFile
     case toggleSidebar
     case toggleFileTree
@@ -94,6 +95,7 @@ enum ShortcutAction: String, Codable, CaseIterable, Identifiable {
         .openVCSTab,
         .quickOpen,
         .switchWorktree,
+        .toggleSelectedProjectExpansion,
         .saveFile,
         .toggleSidebar,
         .toggleFileTree,
@@ -140,6 +142,11 @@ enum ShortcutAction: String, Codable, CaseIterable, Identifiable {
         case .openVCSTab: ShortcutMetadata(displayName: "Source Control", category: "App", scope: .mainWindow)
         case .quickOpen: ShortcutMetadata(displayName: "Quick Open", category: "App", scope: .mainWindow)
         case .switchWorktree: ShortcutMetadata(displayName: "Switch Worktree", category: "Project Navigation", scope: .mainWindow)
+        case .toggleSelectedProjectExpansion: ShortcutMetadata(
+                displayName: "Expand/Collapse Selected Project",
+                category: "Project Navigation",
+                scope: .mainWindow
+            )
         case .saveFile: ShortcutMetadata(displayName: "Save File", category: "Editor", scope: .mainWindow)
         case .toggleSidebar: ShortcutMetadata(displayName: "Toggle Sidebar", category: "App", scope: .mainWindow)
         case .toggleFileTree: ShortcutMetadata(displayName: "Toggle File Tree", category: "App", scope: .mainWindow)
@@ -254,6 +261,7 @@ struct KeyBinding: Codable, Identifiable {
         Self(action: .findInTerminal, combo: KeyCombo(key: "f", command: true)),
         Self(action: .quickOpen, combo: KeyCombo(key: "p", command: true)),
         Self(action: .switchWorktree, combo: KeyCombo(key: "o", command: true, shift: true)),
+        Self(action: .toggleSelectedProjectExpansion, combo: KeyCombo(key: "\\", control: true)),
         Self(action: .saveFile, combo: KeyCombo(key: "s", command: true)),
         Self(action: .toggleSidebar, combo: KeyCombo(key: "b", command: true)),
         Self(action: .toggleFileTree, combo: KeyCombo(key: "e", command: true)),

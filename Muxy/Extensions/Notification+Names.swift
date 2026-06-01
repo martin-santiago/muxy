@@ -10,6 +10,7 @@ extension Notification.Name {
     static let toggleFileTree = Notification.Name("MuxyToggleFileTree")
     static let quickOpen = Notification.Name("MuxyQuickOpen")
     static let switchWorktree = Notification.Name("MuxySwitchWorktree")
+    static let toggleSelectedProjectExpansion = Notification.Name("MuxyToggleSelectedProjectExpansion")
     static let saveActiveEditor = Notification.Name("MuxySaveActiveEditor")
     static let windowFullScreenDidChange = Notification.Name("MuxyWindowFullScreenDidChange")
     static let toggleSidebar = Notification.Name("MuxyToggleSidebar")
